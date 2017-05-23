@@ -34,8 +34,7 @@ void get_options(int argc,
 std::string init_game()
 {
     std::cout << "Scramble Game Starts\n";
-    std::string word = selectRandomWord(preset);
-    return shuffleString(word);
+    return selectRandomWord(preset);
 }
 
 int main(int argc, char * argv[])
@@ -43,6 +42,10 @@ int main(int argc, char * argv[])
     int players = 0;
     get_options(argc, argv, players);
     std::string selected_word = init_game();
+    std::string scrambled_word = shuffleString(selected_word);
+    ServerArgs s_args;
+    s_args.selected_word = selected_word;
+    s_args.scrambled_word = scrambled_word;
     pthread_t server_thread;
     sigset_t new_sigset;
     sigemptyset (&new_sigset);
@@ -53,7 +56,7 @@ int main(int argc, char * argv[])
         exit(-1);
     }
     pthread_mutex_init(&lock, nullptr);
-    if (pthread_create(&server_thread, nullptr, accept_clients, nullptr) < 0)
+    if (pthread_create(&server_thread, nullptr, accept_clients, (void*)&s_args) < 0)
     {
         perror("Could not create server thread");
         exit(-1);

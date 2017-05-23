@@ -56,7 +56,7 @@ int main(int argc, char *argv[])
     char buffer[100 + 1]; // +1 for '\0'
 
     /* Number of bytes received */
-    int nbytes = 0;
+    ssize_t nbytes = 0;
 
     /* Used by getopt */
     int opt = 0;
@@ -129,13 +129,6 @@ int main(int argc, char *argv[])
         /* If we make it this far, we've connected succesfully. Don't check any more entries */
         break;
     }
-    
-    std::string msg = "ACK";
-    if (send(clientSocket, msg.c_str(), msg.size(), 0) <= 0)
-    {
-        perror("Socket send() failed");
-        close(clientSocket);
-    }
 
     /* We don't need the linked list anymore. Free it. */
     freeaddrinfo(res);
@@ -161,7 +154,26 @@ int main(int argc, char *argv[])
           /* The message doesn't have a '\0' at the end. Add one so we
              can print it */
           buffer[nbytes] = '\0';
-          printf("%s\n", buffer);
+          std::string server_message = std::string(buffer);
+          if (server_message != "GAME_OVER")
+          {
+              std::cout << server_message << "\n";
+              std::string guess = "";
+              while (guess.size() == 0)
+              {
+                  std::cout << "Enter guess: ";
+                  std::cin >> guess;
+                  if (send(clientSocket, guess.c_str(), guess.size(), 0) <= 0)
+                  {
+                    perror("Socket send() failed");
+                    close(clientSocket);
+                  }                  
+              }              
+          }
+          else
+          {
+            close(clientSocket);
+          }
       }
     }
     /* Note: The above assumes that the message will arrive in a single packet, which
