@@ -46,6 +46,7 @@ int main(int argc, char * argv[])
     ServerArgs s_args;
     s_args.selected_word = selected_word;
     s_args.scrambled_word = scrambled_word;
+    s_args.number_of_players = players;
     pthread_t server_thread;
     sigset_t new_sigset;
     sigemptyset (&new_sigset);
@@ -62,9 +63,7 @@ int main(int argc, char * argv[])
         exit(-1);
     }
     pthread_join(server_thread, nullptr);
-#ifdef MUTEX
     pthread_mutex_destroy(&lock);
-#endif
     pthread_exit(nullptr);
     return 0;
 }

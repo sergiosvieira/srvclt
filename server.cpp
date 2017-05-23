@@ -4,6 +4,8 @@
 #include <netdb.h> /** struct addrinfo **/
 #include <unistd.h> /** close **/
 
+//#define DEBUG
+
 int create_server_socket(struct addrinfo* ptr,
                          int& option_value)
 {
@@ -22,6 +24,7 @@ int create_server_socket(struct addrinfo* ptr,
                    sizeof(int)) == -1)
     {
         perror("Socket setsockopt() failed");
+        //std::cout << "Close Server " << server_socket << "\n";
         close(server_socket);
         return -1;
     }
@@ -30,6 +33,7 @@ int create_server_socket(struct addrinfo* ptr,
              ptr->ai_addrlen) == -1)
     {
         perror("Socket bind() failed");
+        //std::cout << "Close Server " << server_socket << "\n";
         close(server_socket);
         return -1;
     }
@@ -62,6 +66,7 @@ int init_server()
         if (listen(server_socket, kMaxConnectionsQueue) == -1)
         {
             perror("Socket listen() failed");
+            //std::cout << "Close Server " << server_socket << "\n";
             close(server_socket);
             continue;
         }
@@ -91,7 +96,9 @@ void print_server_state()
         case ServerState::PLAYING:
             state = "PLAYING";
             break;
-            
+        case ServerState::GAME_OVER:
+            state = "GAME_OVER";
+            break;            
     }
 #ifdef DEBUG
     std::cout << "Server State: " << state << "\n";
@@ -107,31 +114,34 @@ void print_active_connections()
 
 void *accept_clients(void *args)
 {
-    struct sockaddr_storage *client_addr = nullptr;
+    struct sockaddr_storage client_addr;
     socklen_t client_addr_length = sizeof(struct sockaddr_storage);
     int client_socket = 0;
-        pthread_t worker_thread;
+    pthread_t worker_thread;
     int server_socket = init_server();
-    if (server_socket == -1) exit(-1);
+    if (server_socket == -1) 
+    {
+        pthread_exit(nullptr);
+        exit(-1);
+    }
     ServerArgs s_args = *(ServerArgs*)args;
     std::string selected_word = s_args.selected_word;
     std::string scrambled_word = s_args.scrambled_word;
+    int players = s_args.number_of_players;
     while (true)
     {
         print_server_state();
         if (server_state == ServerState::IDLE)
         {
-            client_addr = new struct sockaddr_storage();
-            if ((client_socket = accept(server_socket, (struct sockaddr *) client_addr, &client_addr_length)) == -1)
+            if ((client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_length)) == -1)
             {
-                delete client_addr;
                 perror("Could not accept() connection");
                 continue;
             }
             pthread_mutex_lock (&lock);
             connections.push_back(client_socket);
             pthread_mutex_unlock (&lock);
-            if (connections.size() == 2)
+            if (connections.size() == players)
             {
                 pthread_mutex_lock (&lock);
                 server_state = ServerState::PLAYING;
@@ -147,22 +157,40 @@ void *accept_clients(void *args)
                                             connections.end(),
                                             socket);
                         connections.erase(it);
+                        continue;
                     }
-                    ClientArgs *c_args = new ClientArgs();
-                    c_args->socket = socket;
-                    c_args->scrambled_word = scrambled_word;
-                    c_args->selected_word = selected_word;
-                    if (pthread_create(&worker_thread, nullptr, service_single_client, c_args) != 0)
+                    ClientArgs c_args;
+                    c_args.socket = socket;
+                    c_args.scrambled_word = scrambled_word;
+                    c_args.selected_word = selected_word;
+                    if (pthread_create(&worker_thread, nullptr, service_single_client, &c_args) != 0)
                     {
                         perror("Could not create a worker thread");
-                        delete client_addr;
-                        delete c_args;
-                        close(socket    );
+                        close(socket);
                         close(server_socket);
-                        pthread_exit(nullptr);
+                        break;
                     }
                 }
             }
+        } 
+        else if (server_state == ServerState::PLAYING)
+        {
+        }
+        else if (server_state == ServerState::GAME_OVER)
+        {            
+            for (auto socket : connections)
+            {
+                std::string msg = "game_over";
+                if (send(socket, msg.c_str(), msg.size(), 0) <= 0)
+                {
+                    perror("Socket send() failed");
+                }
+                close(socket);
+            }            
+            pthread_mutex_lock (&lock);
+            connections.clear();
+            server_state = ServerState::IDLE;
+            pthread_mutex_unlock (&lock);
         }
     }
     pthread_exit(nullptr);
@@ -178,10 +206,10 @@ void *service_single_client(void *args)
     pthread_detach(pthread_self());
     pthread_mutex_lock (&lock);
     ++active_connections;
-    //fprintf(stderr, "+ Number of connections is %d\n", active_connections);
     pthread_mutex_unlock (&lock);
     while(true)
     {
+        memset(buffer, '\0', sizeof(buffer));
         rec_bytes = recv(client_socket,
                          buffer,
                          sizeof(buffer),
@@ -190,11 +218,11 @@ void *service_single_client(void *args)
         {
             perror("Socket recv() failed");
             close(client_socket);
-            pthread_exit(nullptr);
             break;
         }
         else if (rec_bytes > 0)
         {
+            buffer[rec_bytes] = '\0';
             ptrdiff_t index = find(connections.begin(), connections.end(), client_socket) - connections.begin();
             std::string guess = std::string(buffer);
             if (selected_word == guess)
@@ -204,21 +232,12 @@ void *service_single_client(void *args)
                 if (send(client_socket, msg.c_str(), msg.size(), 0) <= 0)
                 {
                     perror("Socket send() failed");
-                    close(client_socket);
-                }
+                    break;
+                }                
                 pthread_mutex_lock (&lock);
-                for (auto socket : connections)
-                {
-                    std::string msg = "GAME_OVER";
-                    if (send(client_socket, msg.c_str(), msg.size(), 0) <= 0)
-                    {
-                        perror("Socket send() failed");
-                        close(client_socket);
-                    }
-                }
-                connections.clear();
-                server_state = ServerState::IDLE;
+                server_state = ServerState::GAME_OVER;
                 pthread_mutex_lock (&lock);
+                break;
             }
             else
             {
@@ -226,24 +245,18 @@ void *service_single_client(void *args)
                 << guess
                 << " - player" << index + 1
                 << " wrong\n";
-                
                 std::string msg = "Wrong! Try again";
                 if (send(client_socket, msg.c_str(), msg.size(), 0) <= 0)
                 {
                     perror("Socket send() failed");
-                    close(client_socket);
+                    break;                    
                 }
             }
         }
     }
     pthread_mutex_lock (&lock);
-    auto it = std::find(connections.begin(),
-                        connections.end(),
-                        client_socket);
-    connections.erase(it);
     --active_connections;
-    //fprintf(stderr, "- Number of connections is %d\n", active_connections);
     pthread_mutex_unlock (&lock);
-    close(client_socket);
+    //close(client_socket);
     pthread_exit(nullptr);
 }

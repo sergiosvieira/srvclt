@@ -21,6 +21,7 @@ typedef struct
 
 typedef struct
 {
+	int number_of_players = 0;
     std::string selected_word = "";
     std::string scrambled_word = "";
 } ServerArgs;
@@ -29,12 +30,14 @@ enum class ServerState
 {
     IDLE,
     SEND_WORD,
-    PLAYING
+    PLAYING,
+    GAME_OVER
 };
 
 static ServerState server_state = ServerState::IDLE;
 
 void *accept_clients(void *args);
 void *service_single_client(void *args);
+void *server_playing(void *args);
 
 #endif /* server_h */
